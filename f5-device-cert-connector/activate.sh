@@ -17,6 +17,7 @@
 
 set -eu
 
+SCRIPT_VERSION="2026-07-18.5-ca-region"
 PLUGIN_NAME="F5 BIG-IP LTM Device Certificate"
 PLUGIN_IMAGE="ghcr.io/tall27/f5-device-cert-connector@sha256:5d0040bf49c482337600728466abc629d90ba25349cc9176da97235a8df24071"
 REGISTRIES_FILE="/etc/rancher/k3s/registries.yaml"
@@ -44,6 +45,8 @@ When piped through curl, pass flags after "sh -s --", e.g.:
   curl -fsSL <url>/activate-f5-connector.sh | sh -s -- --remove
 HELP
 }
+
+printf '(activate-f5-connector.sh %s)\n' "$SCRIPT_VERSION" >&2
 
 ACTION="activate"
 case "${1:-}" in

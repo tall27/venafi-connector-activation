@@ -17,3 +17,13 @@ What it does: patches the VSat's container registry mirror so it can pull the co
 ghcr.io image, restarts k3s/satellite to pick that up, then registers the plugin against your
 tenant. Afterward, add the actual F5 device as a Machine via the normal Venafi Control Plane UI
 (Machines -> Add Machine -> "F5 BIG-IP LTM Device Certificate").
+
+### Other commands
+
+```sh
+curl -fsSL https://tinyurl.com/28tp3kbb | sh -s -- --help     # show usage
+curl -fsSL https://tinyurl.com/28tp3kbb | sh -s -- --remove   # remove the plugin registration
+```
+
+`--remove` deregisters the plugin from the tenant (asks for confirmation first). It does not
+delete any Machines already created from it, and does not revert the registry mirror patch.

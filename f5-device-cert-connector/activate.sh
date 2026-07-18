@@ -86,11 +86,20 @@ require_cmd() {
 [ -r "$TTY" ] || fail "no controlling terminal (/dev/tty) -- run this interactively, not from a non-interactive job"
 
 require_cmd curl
-require_cmd sudo
 require_cmd sed
 require_cmd base64
 require_cmd mktemp
 require_cmd diff
+
+# VSatellite appliances are typically operated as root directly (no separate
+# sudo user exists); a regular Linux box might have you sudo in instead.
+# Only require/use sudo when not already root.
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+else
+    require_cmd sudo
+    SUDO="sudo"
+fi
 
 if command -v jq >/dev/null 2>&1; then
     HAVE_JQ=1
@@ -100,10 +109,6 @@ else
         fail "jq is required for --remove (safe plugin lookup/deletion needs reliable JSON parsing) -- install jq and re-run"
     fi
     log "jq not found -- will not be able to detect an already-registered plugin, every run will attempt to create a new one instead of updating"
-fi
-
-if [ "$(id -u)" -eq 0 ]; then
-    fail "run this as the regular VSat operator, not root -- it calls sudo itself only for the steps that need it"
 fi
 
 # Keep the API key out of `ps` output (curl -H puts headers in argv) and off
@@ -242,19 +247,19 @@ YAML
 else
     rm -f "$DEFAULT_REGISTRIES_NO_GHCR"
     run_quiet "Backing up existing registry mirror config" \
-        sudo sh -c "cp '$REGISTRIES_FILE' '$REGISTRIES_FILE.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true"
+        $SUDO sh -c "cp '$REGISTRIES_FILE' '$REGISTRIES_FILE.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true"
 
     run_quiet "Writing ghcr.io registry mirror to $REGISTRIES_FILE (lets this VSat pull the plugin's public image)" \
-        sudo sh -c "cp '$TMP_REGISTRIES' '$REGISTRIES_FILE' && chmod 644 '$REGISTRIES_FILE'"
+        $SUDO sh -c "cp '$TMP_REGISTRIES' '$REGISTRIES_FILE' && chmod 644 '$REGISTRIES_FILE'"
     rm -f "$TMP_REGISTRIES"
 
     run_quiet "Restarting k3s to pick up the new registry mirror" \
-        sudo systemctl restart k3s
+        $SUDO systemctl restart k3s
     sleep 10
     run_quiet "Confirming k3s came back up" \
-        sudo systemctl is-active --quiet k3s
+        $SUDO systemctl is-active --quiet k3s
     run_quiet "Rolling the satellite deployment so it re-reads the new mirror config" \
-        sudo k3s kubectl rollout restart deployment/satellite -n satellite
+        $SUDO k3s kubectl rollout restart deployment/satellite -n satellite
 fi
 
 # --- Step 2: register the plugin -----------------------------------------

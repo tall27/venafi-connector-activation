@@ -53,24 +53,39 @@ require_cmd() {
 require_cmd curl
 require_cmd sudo
 require_cmd sed
+require_cmd base64
+require_cmd mktemp
+require_cmd diff
 
 if command -v jq >/dev/null 2>&1; then
     HAVE_JQ=1
 else
     HAVE_JQ=0
+    log "jq not found -- will not be able to detect an already-registered plugin, every run will attempt to create a new one instead of updating"
 fi
 
 if [ "$(id -u)" -eq 0 ]; then
     fail "run this as the regular VSat operator, not root -- it calls sudo itself only for the steps that need it"
 fi
 
+# Keep the API key out of `ps` output (curl -H puts headers in argv) and off
+# the terminal echo: read with echo disabled, pass it to curl via a
+# owner-only-readable config file instead of a -H argument.
+CURL_CFG="$(mktemp)"
+chmod 600 "$CURL_CFG"
+trap 'rm -f "$CURL_CFG"' EXIT
+
 printf 'Venafi tenant API key: '
+stty -echo 2>/dev/null || true
 read -r API_KEY < "$TTY"
+stty echo 2>/dev/null || true
+printf '\n'
 [ -n "$API_KEY" ] || fail "no API key entered"
+printf 'header = "tppl-api-key: %s"\n' "$API_KEY" > "$CURL_CFG"
 
 API_BASE=""
 for base in https://api.venafi.cloud https://api.eu.venafi.cloud https://api.au.venafi.cloud https://api.uk.venafi.cloud; do
-    if curl -fsS -H "tppl-api-key: $API_KEY" "$base/v1/environments" >/dev/null 2>&1; then
+    if curl -fsS -K "$CURL_CFG" "$base/v1/environments" >/dev/null 2>&1; then
         API_BASE="$base"
         break
     fi
@@ -78,15 +93,15 @@ done
 [ -n "$API_BASE" ] || fail "could not reach Venafi TLS Protect Cloud with that API key in any region"
 
 api_get() {
-    curl -fsS -H "tppl-api-key: $API_KEY" "$API_BASE/$1"
+    curl -fsS -K "$CURL_CFG" "$API_BASE/$1"
 }
 
 api_post() {
-    curl -fsS -H "tppl-api-key: $API_KEY" -H "Content-Type: application/json" -X POST -d "$2" "$API_BASE/$1"
+    curl -fsS -K "$CURL_CFG" -H "Content-Type: application/json" -X POST -d "$2" "$API_BASE/$1"
 }
 
 api_patch() {
-    curl -fsS -H "tppl-api-key: $API_KEY" -H "Content-Type: application/json" -X PATCH -d "$2" "$API_BASE/$1"
+    curl -fsS -K "$CURL_CFG" -H "Content-Type: application/json" -X PATCH -d "$2" "$API_BASE/$1"
 }
 
 json_field() {
@@ -100,16 +115,32 @@ json_field() {
 
 # --- Step 1: patch the registry mirror so this VSat can pull ghcr.io -----
 
-if [ -f "$REGISTRIES_FILE" ] && grep -q '"ghcr.io"' "$REGISTRIES_FILE" 2>/dev/null; then
-    log "ghcr.io mirror already present in $REGISTRIES_FILE -- skipping registry patch"
-elif [ -f "$REGISTRIES_FILE" ] && ! grep -q '^mirrors:' "$REGISTRIES_FILE" 2>/dev/null; then
-    fail "$REGISTRIES_FILE exists but doesn't match the expected default shape -- add a ghcr.io mirror block manually, this script won't overwrite a customized file"
-else
-    run_quiet "Backing up existing registry mirror config" \
-        sudo sh -c "cp '$REGISTRIES_FILE' '$REGISTRIES_FILE.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true"
+# The known-default registries.yaml shipped by Venafi's VSatellite, *without*
+# the ghcr.io mirror. Only overwrite the customer's file if it matches this
+# byte-for-byte -- if it's been customized in any other way, refuse rather
+# than silently discard those customizations.
+DEFAULT_REGISTRIES_NO_GHCR="$(mktemp)"
+cat > "$DEFAULT_REGISTRIES_NO_GHCR" <<'YAML'
+mirrors:
+  "docker.io":
+    endpoint:
+      - "https://registry.venafi.cloud"
+    rewrite:
+      "^rancher/(.*)": "public/venafi-vsatellite/rancher/$1"
+      "^bitnami/(.*)": "public/venafi-vsatellite/bitnami/$1"
+  "public.ecr.aws":
+    endpoint:
+      - "https://registry.venafi.cloud"
+    rewrite:
+      "^knative/(.*)": "public/venafi-vsatellite/knative/$1"
+      "^venafi-vsatellite/(.*)": "public/venafi-vsatellite/$1"
+  "*":
+    endpoint:
+      - "https://registry.venafi.cloud"
+YAML
 
-    TMP_REGISTRIES="$(mktemp)"
-    cat > "$TMP_REGISTRIES" <<'YAML'
+TMP_REGISTRIES="$(mktemp)"
+cat > "$TMP_REGISTRIES" <<'YAML'
 mirrors:
   "docker.io":
     endpoint:
@@ -133,6 +164,24 @@ mirrors:
       - "https://registry.venafi.cloud"
 YAML
 
+if [ -f "$REGISTRIES_FILE" ] && grep -q '"ghcr.io"' "$REGISTRIES_FILE" 2>/dev/null; then
+    log "ghcr.io mirror already present in $REGISTRIES_FILE -- skipping registry patch"
+    rm -f "$DEFAULT_REGISTRIES_NO_GHCR" "$TMP_REGISTRIES"
+elif [ -f "$REGISTRIES_FILE" ] && ! diff -q "$REGISTRIES_FILE" "$DEFAULT_REGISTRIES_NO_GHCR" >/dev/null 2>&1; then
+    rm -f "$DEFAULT_REGISTRIES_NO_GHCR" "$TMP_REGISTRIES"
+    fail "$REGISTRIES_FILE doesn't match the expected default content -- it looks customized, so this script won't overwrite it. Add this block manually instead: $(cat <<'YAML'
+  "ghcr.io":
+    endpoint:
+      - "https://ghcr.io"
+    rewrite:
+      "^(.*)": "$1"
+YAML
+)"
+else
+    rm -f "$DEFAULT_REGISTRIES_NO_GHCR"
+    run_quiet "Backing up existing registry mirror config" \
+        sudo sh -c "cp '$REGISTRIES_FILE' '$REGISTRIES_FILE.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true"
+
     run_quiet "Writing ghcr.io registry mirror to $REGISTRIES_FILE (lets this VSat pull the plugin's public image)" \
         sudo sh -c "cp '$TMP_REGISTRIES' '$REGISTRIES_FILE' && chmod 644 '$REGISTRIES_FILE'"
     rm -f "$TMP_REGISTRIES"
@@ -149,7 +198,7 @@ fi
 # --- Step 2: register the plugin -----------------------------------------
 
 log "Checking whether '$PLUGIN_NAME' is already registered on this tenant"
-PLUGINS_JSON="$(api_get v1/plugins)"
+PLUGINS_JSON="$(api_get v1/plugins)" || fail "could not list existing plugins on this tenant"
 if [ "$HAVE_JQ" -eq 1 ]; then
     EXISTING_PLUGIN_ID="$(printf '%s' "$PLUGINS_JSON" | jq -r --arg n "$PLUGIN_NAME" '.plugins[]? | select(.manifest.name==$n) | .id' | head -n1)"
 else
@@ -178,7 +227,7 @@ fi
 # --- Step 3: confirm ------------------------------------------------------
 
 log "Confirming plugin is visible on this tenant"
-CONFIRM_JSON="$(api_get "v1/plugins/$PLUGIN_ID")"
+CONFIRM_JSON="$(api_get "v1/plugins/$PLUGIN_ID")" || fail "could not look up the newly-registered plugin ($PLUGIN_ID)"
 CONFIRM_ID="$(json_field "$CONFIRM_JSON" id)"
 [ "$CONFIRM_ID" = "$PLUGIN_ID" ] || fail "registered plugin $PLUGIN_ID did not come back on lookup"
 

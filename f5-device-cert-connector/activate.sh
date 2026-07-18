@@ -127,7 +127,7 @@ printf '\n'
 printf 'header = "tppl-api-key: %s"\n' "$API_KEY" > "$CURL_CFG"
 
 API_BASE=""
-for base in https://api.venafi.cloud https://api.eu.venafi.cloud https://api.au.venafi.cloud https://api.uk.venafi.cloud; do
+for base in https://api.venafi.cloud https://api.eu.venafi.cloud https://api.au.venafi.cloud https://api.uk.venafi.cloud https://api.ca.venafi.cloud; do
     if curl -fsS -K "$CURL_CFG" "$base/v1/environments" >/dev/null 2>&1; then
         API_BASE="$base"
         break

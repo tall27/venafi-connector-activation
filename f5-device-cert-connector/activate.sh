@@ -1,13 +1,19 @@
 #!/bin/sh
-# Registers the F5 BIG-IP device-cert-connector MACHINE plugin on this VSatellite:
-# patches the local container registry mirror so this VSat can pull the plugin's
-# public ghcr.io image, then registers the plugin against the caller's Venafi tenant.
+# Registers (or removes) the F5 BIG-IP device-cert-connector MACHINE plugin
+# on this VSatellite: patches the local container registry mirror so this
+# VSat can pull the plugin's public ghcr.io image, then registers the plugin
+# against the caller's Venafi tenant.
 #
-# Usage: curl -fsSL <gist-raw-url>/activate-f5-connector.sh | sh -
+# Usage:
+#   curl -fsSL <url>/activate-f5-connector.sh | sh -                # activate (default)
+#   curl -fsSL <url>/activate-f5-connector.sh | sh -s -- --remove   # remove the plugin
+#   curl -fsSL <url>/activate-f5-connector.sh | sh -s -- --help     # show this help
 #
-# After this succeeds, add the actual F5 device as a Machine via the normal
-# Venafi Control Plane UI (Machines -> Add Machine -> "F5 BIG-IP LTM Device
-# Certificate") -- that part is standard product usage, not scripted here.
+# After activation succeeds, add the actual F5 device as a Machine via the
+# normal Venafi Control Plane UI (Machines -> Add Machine -> "F5 BIG-IP LTM
+# Device Certificate") -- that part is standard product usage, not scripted
+# here. --remove only deregisters the plugin itself; it does not touch any
+# Machines already created from it or revert the registry mirror patch.
 
 set -eu
 
@@ -17,6 +23,35 @@ REGISTRIES_FILE="/etc/rancher/k3s/registries.yaml"
 TTY=/dev/tty
 
 MANIFEST_URL_PLACEHOLDER="ewogICJuYW1lIjogIkY1IEJJRy1JUCBMVE0gRGV2aWNlIENlcnRpZmljYXRlIiwKICAiZGVzY3JpcHRpb24iOiAiRGlzY292ZXJzIGFuZCBwcm92aXNpb25zIHRoZSBGNSBCSUctSVAgbWFuYWdlbWVudCBHVUkgKGh0dHBkKSBUTFMgY2VydGlmaWNhdGUuIFNlcGFyYXRlIGZyb20gdGhlIGdlbmVyYWwgRjUgQklHLUlQIExUTSBjb25uZWN0b3IsIHdoaWNoIG1hbmFnZXMgdmlydHVhbC1zZXJ2ZXIgU1NMIHByb2ZpbGVzLiIsCiAgIndvcmtUeXBlcyI6IFsKICAgICJQUk9WSVNJT05JTkciLAogICAgIkRJU0NPVkVSWSIKICBdLAogICJwbHVnaW5UeXBlIjogIk1BQ0hJTkUiLAogICJkb21haW5TY2hlbWEiOiB7CiAgICAiYmluZGluZyI6IHsKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgInRhcmdldCI6IHsKICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAiZGVmYXVsdCI6ICJtYW5hZ2VtZW50LWludGVyZmFjZSIsCiAgICAgICAgICAieC1sYWJlbExvY2FsaXphdGlvbktleSI6ICJ0YXJnZXQubGFiZWwiLAogICAgICAgICAgIngtcmFuayI6IDAKICAgICAgICB9CiAgICAgIH0sCiAgICAgICJ0eXBlIjogIm9iamVjdCIsCiAgICAgICJ4LWxhYmVsTG9jYWxpemF0aW9uS2V5IjogImJpbmRpbmcubGFiZWwiCiAgICB9LAogICAgImNvbm5lY3Rpb24iOiB7CiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJob3N0bmFtZU9yQWRkcmVzcyI6IHsKICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAieC1sYWJlbExvY2FsaXphdGlvbktleSI6ICJhZGRyZXNzLmxhYmVsIiwKICAgICAgICAgICJ4LXJhbmsiOiAwCiAgICAgICAgfSwKICAgICAgICAicG9ydCI6IHsKICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJwb3J0LmRlc2NyaXB0aW9uIiwKICAgICAgICAgICJtYXhpbXVtIjogNjU1MzUsCiAgICAgICAgICAibWluaW11bSI6IDEsCiAgICAgICAgICAidHlwZSI6ICJpbnRlZ2VyIiwKICAgICAgICAgICJ4LWxhYmVsTG9jYWxpemF0aW9uS2V5IjogInBvcnQubGFiZWwiLAogICAgICAgICAgIngtcmFuayI6IDEKICAgICAgICB9LAogICAgICAgICJ1c2VybmFtZSI6IHsKICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAieC1lbmNyeXB0ZWQiOiB0cnVlLAogICAgICAgICAgIngtbGFiZWxMb2NhbGl6YXRpb25LZXkiOiAidXNlcm5hbWUubGFiZWwiLAogICAgICAgICAgIngtcmFuayI6IDIKICAgICAgICB9LAogICAgICAgICJwYXNzd29yZCI6IHsKICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAieC1jb250cm9sT3B0aW9ucyI6IHsKICAgICAgICAgICAgInBhc3N3b3JkIjogdHJ1ZSwKICAgICAgICAgICAgInNob3dQYXNzd29yZExhYmVsIjogInBhc3N3b3JkLnNob3dQYXNzd29yZCIsCiAgICAgICAgICAgICJoaWRlUGFzc3dvcmRMYWJlbCI6ICJwYXNzd29yZC5oaWRlUGFzc3dvcmQiCiAgICAgICAgICB9LAogICAgICAgICAgIngtZW5jcnlwdGVkIjogdHJ1ZSwKICAgICAgICAgICJ4LWxhYmVsTG9jYWxpemF0aW9uS2V5IjogInBhc3N3b3JkLmxhYmVsIiwKICAgICAgICAgICJ4LXJhbmsiOiAzCiAgICAgICAgfQogICAgICB9LAogICAgICAicmVxdWlyZWQiOiBbCiAgICAgICAgImhvc3RuYW1lT3JBZGRyZXNzIiwKICAgICAgICAidXNlcm5hbWUiLAogICAgICAgICJwYXNzd29yZCIKICAgICAgXSwKICAgICAgInR5cGUiOiAib2JqZWN0IgogICAgfSwKICAgICJrZXlzdG9yZSI6IHsKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgImNlcnRpZmljYXRlTmFtZSI6IHsKICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJjZXJ0aWZpY2F0ZU5hbWUuZGVzY3JpcHRpb24iLAogICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICJ4LWxhYmVsTG9jYWxpemF0aW9uS2V5IjogImNlcnRpZmljYXRlTmFtZS5sYWJlbCIsCiAgICAgICAgICAieC1yYW5rIjogMCwKICAgICAgICAgICJwYXR0ZXJuIjogIl5bXFx3XFxkXFwtLl0rJCIKICAgICAgICB9LAogICAgICAgICJjaGFpbk5hbWUiOiB7CiAgICAgICAgICAidHlwZSI6ICJzdHJpbmciLAogICAgICAgICAgIngtaGlkZGVuIjogdHJ1ZSwKICAgICAgICAgICJ4LWxhYmVsTG9jYWxpemF0aW9uS2V5IjogImNoYWluTmFtZS5sYWJlbCIsCiAgICAgICAgICAieC1yYW5rIjogMSwKICAgICAgICAgICJwYXR0ZXJuIjogIl5bXFx3XFxkXFwtLl0rJCIKICAgICAgICB9CiAgICAgIH0sCiAgICAgICJyZXF1aXJlZCI6IFsKICAgICAgICAiY2VydGlmaWNhdGVOYW1lIgogICAgICBdLAogICAgICAidHlwZSI6ICJvYmplY3QiLAogICAgICAieC1sYWJlbExvY2FsaXphdGlvbktleSI6ICJrZXlzdG9yZS5sYWJlbCIsCiAgICAgICJ4LXByaW1hcnlLZXkiOiBbCiAgICAgICAgIiMvY2VydGlmaWNhdGVOYW1lIgogICAgICBdCiAgICB9LAogICAgImNlcnRpZmljYXRlQnVuZGxlIjogewogICAgICAicHJvcGVydGllcyI6IHsKICAgICAgICAiY2VydGlmaWNhdGUiOiB7CiAgICAgICAgICAiY29udGVudEVuY29kaW5nIjogImJhc2U2NCIsCiAgICAgICAgICAidHlwZSI6ICJzdHJpbmciCiAgICAgICAgfSwKICAgICAgICAiY2VydGlmaWNhdGVDaGFpbiI6IHsKICAgICAgICAgICJjb250ZW50RW5jb2RpbmciOiAiYmFzZTY0IiwKICAgICAgICAgICJ0eXBlIjogInN0cmluZyIKICAgICAgICB9LAogICAgICAgICJwcml2YXRlS2V5IjogewogICAgICAgICAgImNvbnRlbnRFbmNvZGluZyI6ICJiYXNlNjQiLAogICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICJ4LWVuY3J5cHRlZC1iYXNlNjQiOiB0cnVlCiAgICAgICAgfQogICAgICB9LAogICAgICAicmVxdWlyZWQiOiBbCiAgICAgICAgImNlcnRpZmljYXRlIiwKICAgICAgICAicHJpdmF0ZUtleSIKICAgICAgXSwKICAgICAgInR5cGUiOiAib2JqZWN0IgogICAgfSwKICAgICJtZXRhZGF0YSI6IHsKICAgICAgInR5cGUiOiAib2JqZWN0IiwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgImNlcnRpZmljYXRlTmFtZSI6IHsKICAgICAgICAgICJ0eXBlIjogInN0cmluZyIKICAgICAgICB9CiAgICAgIH0KICAgIH0sCiAgICAiZGlzY292ZXJ5IjogewogICAgICAicHJvcGVydGllcyI6IHsKICAgICAgICAiZXhjbHVkZUV4cGlyZWRDZXJ0aWZpY2F0ZXMiOiB7CiAgICAgICAgICAidHlwZSI6ICJib29sZWFuIiwKICAgICAgICAgICJ4LWxhYmVsTG9jYWxpemF0aW9uS2V5IjogImRpc2NvdmVyeS5leHBpcmVkQ2VydGlmaWNhdGVzTGFiZWwiLAogICAgICAgICAgIngtcmFuayI6IDAKICAgICAgICB9CiAgICAgIH0sCiAgICAgICJ0eXBlIjogIm9iamVjdCIKICAgIH0sCiAgICAiZGlzY292ZXJ5Q29udHJvbCI6IHsKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgIm1heFJlc3VsdHMiOiB7CiAgICAgICAgICAidHlwZSI6ICJpbnQiCiAgICAgICAgfQogICAgICB9LAogICAgICAicmVxdWlyZWQiOiBbCiAgICAgICAgIm1heFJlc3VsdHMiCiAgICAgIF0sCiAgICAgICJ0eXBlIjogIm9iamVjdCIKICAgIH0sCiAgICAiZGlzY292ZXJ5UGFnZSI6IHsKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgImRpc2NvdmVyeVR5cGUiOiB7CiAgICAgICAgICAidHlwZSI6ICJzdHJpbmciCiAgICAgICAgfSwKICAgICAgICAicGFnaW5hdG9yIjogewogICAgICAgICAgInR5cGUiOiAic3RyaW5nIgogICAgICAgIH0KICAgICAgfSwKICAgICAgInR5cGUiOiAib2JqZWN0IgogICAgfQogIH0sCiAgImxvY2FsaXphdGlvblJlc291cmNlcyI6IHsKICAgICJlbiI6IHsKICAgICAgImFkZHJlc3MiOiB7CiAgICAgICAgImxhYmVsIjogIkY1IEJJRy1JUCBBZGRyZXNzL0hvc3RuYW1lIgogICAgICB9LAogICAgICAicG9ydCI6IHsKICAgICAgICAiZGVzY3JpcHRpb24iOiAiTm8gdmFsdWUgaXMgaW50ZXJwcmV0ZWQgYXMgNDQzIiwKICAgICAgICAibGFiZWwiOiAiUG9ydCIKICAgICAgfSwKICAgICAgInVzZXJuYW1lIjogewogICAgICAgICJsYWJlbCI6ICJVc2VybmFtZSIKICAgICAgfSwKICAgICAgInBhc3N3b3JkIjogewogICAgICAgICJsYWJlbCI6ICJQYXNzd29yZCIsCiAgICAgICAgInNob3dQYXNzd29yZCI6ICJTaG93IFBhc3N3b3JkIiwKICAgICAgICAiaGlkZVBhc3N3b3JkIjogIkhpZGUgUGFzc3dvcmQiCiAgICAgIH0sCiAgICAgICJrZXlzdG9yZSI6IHsKICAgICAgICAibGFiZWwiOiAiRGV2aWNlIENlcnRpZmljYXRlIEluZm9ybWF0aW9uIgogICAgICB9LAogICAgICAiY2VydGlmaWNhdGVOYW1lIjogewogICAgICAgICJkZXNjcmlwdGlvbiI6ICJIb3cgdGhlIGNlcnRpZmljYXRlIHNob3VsZCBhcHBlYXIgb24gdGhlIEY1IEJJRy1JUCIsCiAgICAgICAgImxhYmVsIjogIkNlcnRpZmljYXRlIE5hbWUiCiAgICAgIH0sCiAgICAgICJjaGFpbk5hbWUiOiB7CiAgICAgICAgImxhYmVsIjogIkNoYWluIEJ1bmRsZSBOYW1lIgogICAgICB9LAogICAgICAiYmluZGluZyI6IHsKICAgICAgICAibGFiZWwiOiAiTWFuYWdlbWVudCBJbnRlcmZhY2UiCiAgICAgIH0sCiAgICAgICJ0YXJnZXQiOiB7CiAgICAgICAgImxhYmVsIjogIlRhcmdldCIsCiAgICAgICAgImRlc2NyaXB0aW9uIjogIlRoZXJlIGlzIG9ubHkgb25lIHRhcmdldDogdGhlIEY1IG1hbmFnZW1lbnQgR1VJLiBObyBzZWxlY3Rpb24gbmVlZGVkLiIKICAgICAgfSwKICAgICAgImRpc2NvdmVyeSI6IHsKICAgICAgICAiZXhwaXJlZENlcnRpZmljYXRlc0xhYmVsIjogIkV4Y2x1ZGUgZXhwaXJlZCBjZXJ0aWZpY2F0ZXMiCiAgICAgIH0KICAgIH0KICB9LAogICJob29rcyI6IHsKICAgICJtYXBwaW5nIjogewogICAgICAiY29uZmlndXJlSW5zdGFsbGF0aW9uRW5kcG9pbnQiOiB7CiAgICAgICAgInBhdGgiOiAiL3YxL2NvbmZpZ3VyZWluc3RhbGxhdGlvbmVuZHBvaW50IiwKICAgICAgICAicmVxdWVzdCI6IG51bGwsCiAgICAgICAgInJlc3BvbnNlIjogbnVsbAogICAgICB9LAogICAgICAiZGlzY292ZXJDZXJ0aWZpY2F0ZXMiOiB7CiAgICAgICAgInBhdGgiOiAiL3YxL2Rpc2NvdmVyY2VydGlmaWNhdGVzIiwKICAgICAgICAicmVxdWVzdCI6IG51bGwsCiAgICAgICAgInJlc3BvbnNlIjogbnVsbAogICAgICB9LAogICAgICAiZ2V0VGFyZ2V0Q29uZmlndXJhdGlvbiI6IHsKICAgICAgICAicGF0aCI6ICIvdjEvZ2V0dGFyZ2V0Y29uZmlndXJhdGlvbiIsCiAgICAgICAgInJlcXVlc3QiOiBudWxsLAogICAgICAgICJyZXNwb25zZSI6IG51bGwKICAgICAgfSwKICAgICAgImluc3RhbGxDZXJ0aWZpY2F0ZUJ1bmRsZSI6IHsKICAgICAgICAicGF0aCI6ICIvdjEvaW5zdGFsbGNlcnRpZmljYXRlYnVuZGxlIiwKICAgICAgICAicmVxdWVzdCI6IG51bGwsCiAgICAgICAgInJlc3BvbnNlIjogbnVsbAogICAgICB9LAogICAgICAidGVzdENvbm5lY3Rpb24iOiB7CiAgICAgICAgInBhdGgiOiAiL3YxL3Rlc3Rjb25uZWN0aW9uIiwKICAgICAgICAicmVxdWVzdCI6IG51bGwsCiAgICAgICAgInJlc3BvbnNlIjogbnVsbAogICAgICB9CiAgICB9LAogICAgInJlcXVlc3RDb252ZXJ0ZXJzIjogWwogICAgICAiYXJndW1lbnRzLWRlY3J5cHRlciIKICAgIF0KICB9Cn0K"
+
+print_help() {
+    cat <<HELP
+Usage: activate-f5-connector.sh [--remove|--help]
+
+  (no argument)   Register the F5 BIG-IP device-cert-connector MACHINE
+                  plugin on this VSatellite's Venafi tenant. Patches this
+                  VSat's registry mirror to allow pulling the plugin's
+                  public ghcr.io image, then registers/updates the plugin.
+
+  --remove, -r    Remove the "$PLUGIN_NAME" plugin registration from the
+                  tenant. Prompts for confirmation before deleting. Does not
+                  delete any Machines already created from this plugin, and
+                  does not revert the registry mirror patch.
+
+  --help, -h      Show this help and exit.
+
+When piped through curl, pass flags after "sh -s --", e.g.:
+  curl -fsSL <url>/activate-f5-connector.sh | sh -s -- --remove
+HELP
+}
+
+ACTION="activate"
+case "${1:-}" in
+    "") ;;
+    --help|-h) print_help; exit 0 ;;
+    --remove|-r) ACTION="remove" ;;
+    *) printf 'ERROR: unknown argument: %s\n' "$1" >&2; print_help >&2; exit 1 ;;
+esac
 
 log() {
     printf '==> %s\n' "$1"
@@ -61,6 +96,9 @@ if command -v jq >/dev/null 2>&1; then
     HAVE_JQ=1
 else
     HAVE_JQ=0
+    if [ "$ACTION" = "remove" ]; then
+        fail "jq is required for --remove (safe plugin lookup/deletion needs reliable JSON parsing) -- install jq and re-run"
+    fi
     log "jq not found -- will not be able to detect an already-registered plugin, every run will attempt to create a new one instead of updating"
 fi
 
@@ -104,6 +142,10 @@ api_patch() {
     curl -fsS -K "$CURL_CFG" -H "Content-Type: application/json" -X PATCH -d "$2" "$API_BASE/$1"
 }
 
+api_delete() {
+    curl -fsS -K "$CURL_CFG" -X DELETE "$API_BASE/$1"
+}
+
 json_field() {
     # json_field <json> <field>  (best-effort: jq if present, else a grep/sed fallback for a flat string/id field)
     if [ "$HAVE_JQ" -eq 1 ]; then
@@ -112,6 +154,26 @@ json_field() {
         printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1
     fi
 }
+
+if [ "$ACTION" = "remove" ]; then
+    log "Looking up '$PLUGIN_NAME' on this tenant"
+    PLUGINS_JSON="$(api_get v1/plugins)" || fail "could not list existing plugins on this tenant"
+    REMOVE_PLUGIN_ID="$(printf '%s' "$PLUGINS_JSON" | jq -r --arg n "$PLUGIN_NAME" '.plugins[]? | select(.manifest.name==$n) | .id' | head -n1)"
+    [ -n "$REMOVE_PLUGIN_ID" ] || fail "no plugin named '$PLUGIN_NAME' is registered on this tenant -- nothing to remove"
+
+    printf 'Remove plugin "%s" (id %s) from this tenant? This does not delete Machines already created from it. [y/N] ' "$PLUGIN_NAME" "$REMOVE_PLUGIN_ID"
+    read -r CONFIRM < "$TTY"
+    case "$CONFIRM" in
+        y|Y|yes|YES) ;;
+        *) log "Cancelled, nothing removed"; exit 0 ;;
+    esac
+
+    run_quiet "Deleting plugin registration $REMOVE_PLUGIN_ID" \
+        api_delete "v1/plugins/$REMOVE_PLUGIN_ID"
+
+    printf '\nDone. "%s" (plugin id %s) has been removed from this tenant.\n' "$PLUGIN_NAME" "$REMOVE_PLUGIN_ID"
+    exit 0
+fi
 
 # --- Step 1: patch the registry mirror so this VSat can pull ghcr.io -----
 
